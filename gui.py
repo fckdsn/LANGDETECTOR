@@ -1,18 +1,21 @@
-import tkinter as tk
-from tkinter import scrolledtext, messagebox
-import joblib
 import os
 import re
 import threading
+import tkinter as tk
+from datetime import datetime
+from tkinter import filedialog, messagebox, scrolledtext, ttk
+
+import joblib
 import numpy as np
 from scipy.sparse import hstack
+
 
 class LanguageDetectorGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Detektor Jezyka i Alfabetu")
-        self.root.geometry("900x700")
-        self.root.minsize(800, 600)
+        self.root.geometry("1000x800")
+        self.root.minsize(900, 700)
         self.root.configure(bg='#1a1a2e')
         
         self.model = None
@@ -20,120 +23,132 @@ class LanguageDetectorGUI:
         self.char_vectorizer = None
         self.word_vectorizer = None
         self.language_info = {}
+        self.test_texts = {}
+        self.models_loaded = False
+        self.log_lines = []
         
         self.create_widgets()
-        self.load_models()
+        self.load_models_async()
     
     def create_widgets(self):
         main_frame = tk.Frame(self.root, bg='#1a1a2e')
         main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=15)
         
-        title = tk.Label(main_frame, text="DETEKTOR JEZYKA I ALFABETU", 
-                        font=('Arial', 20, 'bold'), bg='#1a1a2e', fg='#e94560')
-        title.pack(pady=(0, 5))
+        tk.Label(main_frame, text="DETEKTOR JEZYKA I ALFABETU", 
+                font=('Arial', 20, 'bold'), bg='#1a1a2e', fg='#e94560').pack(pady=(0, 5))
         
-        subtitle = tk.Label(main_frame, text="Rozpoznawanie jezyka i alfabetu na podstawie tekstu", 
-                           font=('Arial', 10), bg='#1a1a2e', fg='#888888')
-        subtitle.pack(pady=(0, 20))
+        self.status_label = tk.Label(main_frame, text="Ladowanie modeli...", 
+                font=('Arial', 10), bg='#1a1a2e', fg='#f39c12')
+        self.status_label.pack(pady=(0, 10))
         
-        status_frame = tk.LabelFrame(main_frame, text=" STATUS ", font=('Arial', 10, 'bold'),
-                                     bg='#16213e', fg='white', bd=1, relief=tk.GROOVE)
-        status_frame.pack(fill=tk.X, pady=(0, 15))
+        self.tab_control = ttk.Notebook(main_frame)
+        self.tab_detect = tk.Frame(self.tab_control, bg='#1a1a2e')
+        self.tab_auto = tk.Frame(self.tab_control, bg='#1a1a2e')
+        self.tab_log = tk.Frame(self.tab_control, bg='#1a1a2e')
+        self.tab_control.add(self.tab_detect, text='  DETEKCJA  ')
+        self.tab_control.add(self.tab_auto, text='  AUTO-TEST  ')
+        self.tab_control.add(self.tab_log, text='  LOGI  ')
+        self.tab_control.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         
-        self.status_label = tk.Label(status_frame, text="Ladowanie modeli...", 
-                                     font=('Arial', 9), bg='#16213e', fg='#f39c12')
-        self.status_label.pack(pady=5)
+        style = ttk.Style()
+        style.theme_use('default')
+        style.configure('TNotebook', background='#1a1a2e', borderwidth=0)
+        style.configure('TNotebook.Tab', background='#16213e', foreground='white', padding=[15, 5], font=('Arial', 10, 'bold'))
+        style.map('TNotebook.Tab', background=[('selected', '#e94560')], foreground=[('selected', 'white')])
         
-        self.lang_count_label = tk.Label(status_frame, text="", 
-                                        font=('Arial', 9), bg='#16213e', fg='#cccccc')
-        self.lang_count_label.pack(pady=(0, 5))
-        
-        input_frame = tk.LabelFrame(main_frame, text=" WPROWADZ TEKST ", font=('Arial', 10, 'bold'),
+        input_frame = tk.LabelFrame(self.tab_detect, text=" WPROWADZ TEKST ", font=('Arial', 10, 'bold'),
                                     bg='#16213e', fg='white', bd=1, relief=tk.GROOVE)
-        input_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+        input_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         
-        self.text_input = scrolledtext.ScrolledText(input_frame, height=8, font=('Arial', 11), 
+        self.text_input = scrolledtext.ScrolledText(input_frame, height=6, font=('Arial', 11), 
                                                      wrap=tk.WORD, bg='#0f3460', fg='white',
                                                      insertbackground='white', bd=0)
         self.text_input.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         self.text_input.insert(tk.END, "Wprowadz tekst do analizy (minimum 30 znakow)...")
-        self.text_input.bind('<FocusIn>', self.on_focus_in)
-        self.text_input.bind('<FocusOut>', self.on_focus_out)
+        self.text_input.bind('<FocusIn>', lambda e: self.text_input.delete("1.0", tk.END) if "Wprowadz tekst" in self.text_input.get("1.0", tk.END) else None)
         
-        btn_frame = tk.Frame(main_frame, bg='#1a1a2e')
-        btn_frame.pack(fill=tk.X, pady=(0, 15))
+        btn_frame = tk.Frame(self.tab_detect, bg='#1a1a2e')
+        btn_frame.pack(fill=tk.X, pady=(0, 10))
         
-        self.detect_btn = tk.Button(btn_frame, text="ANALIZUJ", 
-                                   font=('Arial', 12, 'bold'), bg='#e94560', fg='white',
+        self.detect_btn = tk.Button(btn_frame, text="ANALIZUJ", font=('Arial', 12, 'bold'), bg='#e94560', fg='white',
                                    activebackground='#c62a48', cursor='hand2', height=1, width=18,
                                    command=self.detect_language)
         self.detect_btn.pack(side=tk.LEFT, padx=(0, 10))
         
-        self.clear_btn = tk.Button(btn_frame, text="WYCZYSC", 
-                                  font=('Arial', 10), bg='#533483', fg='white',
-                                  activebackground='#3b1f6e', cursor='hand2', width=14,
-                                  command=self.clear_text)
-        self.clear_btn.pack(side=tk.LEFT)
+        tk.Button(btn_frame, text="WYCZYSC", font=('Arial', 10), bg='#533483', fg='white',
+                 activebackground='#3b1f6e', cursor='hand2', width=14,
+                 command=lambda: [self.text_input.delete("1.0", tk.END), self.result_text.delete("1.0", tk.END)]).pack(side=tk.LEFT)
         
-        self.test_btn = tk.Button(btn_frame, text="TEKSTY TESTOWE", 
-                                 font=('Arial', 10), bg='#0f3460', fg='white',
-                                 activebackground='#0a2848', cursor='hand2', width=16,
-                                 command=self.show_test_texts)
-        self.test_btn.pack(side=tk.RIGHT)
+        tk.Button(btn_frame, text="TEKSTY TESTOWE", font=('Arial', 10), bg='#0f3460', fg='white',
+                 activebackground='#0a2848', cursor='hand2', width=16,
+                 command=self.show_test_texts).pack(side=tk.RIGHT)
         
-        result_frame = tk.LabelFrame(main_frame, text=" WYNIKI ANALIZY ", font=('Arial', 10, 'bold'),
+        result_frame = tk.LabelFrame(self.tab_detect, text=" WYNIKI ANALIZY ", font=('Arial', 10, 'bold'),
                                      bg='#16213e', fg='white', bd=1, relief=tk.GROOVE)
         result_frame.pack(fill=tk.BOTH, expand=True)
         
-        self.result_text = scrolledtext.ScrolledText(result_frame, height=12, font=('Arial', 10), 
+        self.result_text = scrolledtext.ScrolledText(result_frame, height=10, font=('Arial', 10), 
                                                       wrap=tk.WORD, bg='#0f3460', fg='white',
                                                       insertbackground='white', bd=0)
         self.result_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        self.test_texts = {
-           
-    'Angielski (EN)': "The rapid advancement of artificial intelligence has transformed many industries in recent years. Machine learning algorithms can now analyze massive amounts of data and identify patterns that humans might miss. This technology is revolutionizing healthcare, finance, transportation and education worldwide.",
-
-    'Niemiecki (DE)': "Die rasante Entwicklung der künstlichen Intelligenz hat in den letzten Jahren viele Branchen grundlegend verändert. Maschinenlernalgorithmen können heute riesige Datenmengen analysieren und Muster erkennen, die Menschen möglicherweise übersehen. Diese Technologie revolutioniert weltweit das Gesundheitswesen, Finanzwesen, Transportwesen und Bildungswesen.",
-
-    'Hiszpański (ES)': "El rápido avance de la inteligencia artificial ha transformado muchas industrias en los últimos años. Los algoritmos de aprendizaje automático pueden analizar grandes cantidades de datos e identificar patrones que los humanos podrían pasar por alto. Esta tecnología está revolucionando la atención médica, las finanzas, el transporte y la educación en todo el mundo.",
-
-    'Francuski (FR)': "L'intelligence artificielle a transformé de nombreux secteurs ces dernières années. Les algorithmes d'apprentissage automatique peuvent analyser d'énormes quantités de données et identifier des schémas que les humains pourraient manquer. Cette technologie révolutionne les soins de santé, la finance, les transports et l'éducation dans le monde entier.",
-
-    'Włoski (IT)': "Il rapido progresso dell'intelligenza artificiale ha trasformato molte industrie negli ultimi anni. Gli algoritmi di apprendimento automatico possono analizzare grandi quantità di dati e identificare modelli che gli umani potrebbero trascurare. Questa tecnologia sta rivoluzionando l'assistenza sanitaria, la finanza, i trasporti e l'istruzione in tutto il mondo.",
-
-    'Polski (PL)': "Sztuczna inteligencja zmieniła wiele branż w ostatnich latach. Algorytmy uczenia maszynowego potrafią analizować ogromne ilości danych i identyfikować wzorce, które ludzie mogą przeoczyć. Ta technologia rewolucjonizuje opiekę zdrowotną, finanse, transport i edukację na całym świecie.",
-
-    'Rosyjski (RU)': "Быстрое развитие искусственного интеллекта преобразовало многие отрасли в последние годы. Алгоритмы машинного обучения могут анализировать огромные объемы данных и выявлять закономерности, которые люди могут пропустить. Эта технология революционизирует здравоохранение, финансы, транспорт и образование во всем мире.",
-
-    'Ukraiński (UK)': "Швидкий розвиток штучного інтелекту перетворив багато галузей за останні роки. Алгоритми машинного навчання можуть аналізувати величезні обсяги даних і виявляти закономірності, які люди можуть пропустити. Ця технологія революціонізує охорону здоров'я, фінанси, транспорт та освіту в усьому світі.",
-}
+        auto_frame = tk.LabelFrame(self.tab_auto, text=" AUTO-TEST Z test_languages.txt ", font=('Arial', 10, 'bold'),
+                                   bg='#16213e', fg='white', bd=1, relief=tk.GROOVE)
+        auto_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         
+        self.auto_result_text = scrolledtext.ScrolledText(auto_frame, height=18, font=('Consolas', 9), 
+                                                           wrap=tk.WORD, bg='#0f3460', fg='#00ff00',
+                                                           insertbackground='white', bd=0)
+        self.auto_result_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        auto_btn_frame = tk.Frame(self.tab_auto, bg='#1a1a2e')
+        auto_btn_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        self.auto_btn = tk.Button(auto_btn_frame, text="URUCHOM AUTO-TEST", font=('Arial', 12, 'bold'), 
+                                  bg='#e94560', fg='white', activebackground='#c62a48', cursor='hand2', 
+                                  height=1, width=20, command=self.run_auto_test_gui)
+        self.auto_btn.pack(side=tk.LEFT, padx=(0, 10))
+        
+        tk.Button(auto_btn_frame, text="ZAPISZ RAPORT", font=('Arial', 10), bg='#0f3460', fg='white',
+                 activebackground='#0a2848', cursor='hand2', width=16,
+                 command=self.save_report).pack(side=tk.LEFT)
+        
+        log_frame = tk.LabelFrame(self.tab_log, text=" LOGI SYSTEMOWE ", font=('Arial', 10, 'bold'),
+                                  bg='#16213e', fg='white', bd=1, relief=tk.GROOVE)
+        log_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=20, font=('Consolas', 9), 
+                                                   wrap=tk.WORD, bg='#0f3460', fg='#00ff00',
+                                                   insertbackground='white', bd=0)
+        self.log_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        log_btn_frame = tk.Frame(self.tab_log, bg='#1a1a2e')
+        log_btn_frame.pack(fill=tk.X)
+        tk.Button(log_btn_frame, text="ZAPISZ LOGI", font=('Arial', 10), bg='#0f3460', fg='white',
+                 activebackground='#0a2848', cursor='hand2', width=16,
+                 command=self.save_logs).pack(side=tk.LEFT)
     
-    def on_focus_in(self, event):
-        if self.text_input.get("1.0", tk.END).strip() == "Wprowadz tekst do analizy (minimum 30 znakow)...":
-            self.text_input.delete("1.0", tk.END)
+    def log(self, msg):
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        line = f"[{timestamp}] {msg}"
+        self.log_lines.append(line)
+        self.root.after(0, lambda: self.log_text.insert(tk.END, line + "\n"))
+        self.root.after(0, lambda: self.log_text.see(tk.END))
     
-    def on_focus_out(self, event):
-        if not self.text_input.get("1.0", tk.END).strip():
-            self.text_input.insert(tk.END, "Wprowadz tekst do analizy (minimum 30 znakow)...")
-    
-    def load_models(self):
-        thread = threading.Thread(target=self._load_models)
-        thread.daemon = True
-        thread.start()
+    def load_models_async(self):
+        self.log("Rozpoczynanie ladowania modeli...")
+        threading.Thread(target=self._load_models, daemon=True).start()
     
     def _load_models(self):
         try:
             models_path = 'pliki/models'
-            
             if not os.path.exists(f'{models_path}/language_model.pkl'):
-                self.root.after(0, self.show_error, "Nie znaleziono modeli. Uruchom najpierw trenowanie (python main_train.py)")
+                self.root.after(0, lambda: self.status_label.config(text="Nie znaleziono modeli. Uruchom python main_train.py", fg='#e74c3c'))
+                self.log("BLAD: Nie znaleziono modeli w pliki/models/")
                 return
             
             self.model = joblib.load(f'{models_path}/language_model.pkl')
             self.label_encoder = joblib.load(f'{models_path}/language_encoder.pkl')
-            
             vectorizers = joblib.load(f'{models_path}/vectorizers.pkl')
             self.char_vectorizer = vectorizers[0]
             self.word_vectorizer = vectorizers[1]
@@ -142,40 +157,50 @@ class LanguageDetectorGUI:
             if os.path.exists(info_path):
                 self.language_info = joblib.load(info_path)
             
-            self.root.after(0, self.update_status, "Modele zaladowane", 
-                           f"Rozpoznawanych jezykow: {len(self.label_encoder.classes_)}")
+            self.load_test_texts()
+            self.models_loaded = True
             
-        except Exception as e:
-            self.root.after(0, self.show_error, f"Blad ladowania: {str(e)}")
+            n_langs = len(self.label_encoder.classes_)
+            n_tests = len(self.test_texts)
+            self.log(f"Modele zaladowane: {n_langs} jezykow, {n_tests} tekstow testowych")
+            
+            self.root.after(0, lambda: self.status_label.config(
+                text=f"Zaladowano {n_langs} jezykow | {n_tests} tekstow testowych", 
+                fg='#2ecc71'))
+        except Exception as exc:
+            err_short = str(exc)[:80]
+            self.log(f"BLAD ladowania: {str(exc)[:100]}")
+            self.root.after(
+                0,
+                lambda: self.status_label.config(text=f"Blad: {err_short}", fg='#e74c3c'),
+            )
     
-    def update_status(self, status_msg, lang_msg):
-        self.status_label.config(text=status_msg, fg='#2ecc71')
-        self.lang_count_label.config(text=lang_msg)
-    
-    def show_error(self, msg):
-        messagebox.showerror("Blad", msg)
-    
-    def clean_text(self, text):
-        if not text:
-            return ""
-        text = text.lower()
-        text = re.sub(r"\s+", " ", text)
-        text = re.sub(r"http\S+|www\S+|https\S+", "", text)
-        text = re.sub(r"\S+@\S+", "", text)
-        text = re.sub(r"[^a-zа-яё0-9\s]", "", text)
-        text = " ".join([w for w in text.split() if len(w) > 1])
-        return text.strip()
+    def load_test_texts(self):
+        self.test_texts = {}
+        if os.path.exists('test_languages.txt'):
+            with open('test_languages.txt', 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and '|' in line:
+                        parts = line.split('|', 1)
+                        if len(parts) == 2:
+                            code = parts[0].strip()
+                            text = parts[1].strip()
+                            name = self.language_info.get(code, {}).get('name', code)
+                            self.test_texts[f"{name} ({code.upper()})"] = text
+            self.log(f"Zaladowano {len(self.test_texts)} tekstow z test_languages.txt")
     
     def predict(self, text):
-        cleaned = self.clean_text(text)
-        
-        if len(cleaned) < 20:
+        if not self.models_loaded:
+            return None, 0, []
+        text = re.sub(r'[^a-zа-яё0-9\s]', '', text.lower())
+        text = re.sub(r'\s+', ' ', text).strip()
+        if len(text) < 20:
             return None, 0, []
         
-        X_char = self.char_vectorizer.transform([cleaned])
-        X_word = self.word_vectorizer.transform([cleaned])
+        X_char = self.char_vectorizer.transform([text])
+        X_word = self.word_vectorizer.transform([text])
         X_combined = hstack([X_char, X_word])
-        
         probs = self.model.predict_proba(X_combined)[0]
         top = np.argsort(probs)[::-1][:5]
         
@@ -191,113 +216,182 @@ class LanguageDetectorGUI:
                     'alphabet': info.get('alphabet', 'unknown'),
                     'confidence': probs[idx]
                 })
-        
-        if not results:
-            return None, 0, []
-        
-        return results[0]['language'], results[0]['confidence'], results
+        return (results[0]['language'], results[0]['confidence'], results) if results else (None, 0, [])
     
     def detect_language(self):
-        text = self.text_input.get("1.0", tk.END).strip()
-        
-        if not text or text == "Wprowadz tekst do analizy (minimum 30 znakow)...":
-            messagebox.showwarning("Uwaga", "Wprowadz tekst do analizy")
+        if not self.models_loaded:
+            messagebox.showwarning("Uwaga", "Modele nie sa jeszcze zaladowane")
             return
-        
-        if len(text) < 30:
+        text = self.text_input.get("1.0", tk.END).strip()
+        if not text or len(text) < 30:
             messagebox.showwarning("Uwaga", "Tekst za krotki. Minimum 30 znakow")
             return
         
+        self.log(f"Analiza tekstu: {text[:50]}...")
         self.detect_btn.config(state=tk.DISABLED, text="ANALIZUJE...")
-        thread = threading.Thread(target=self._detect_thread, args=(text,))
-        thread.daemon = True
-        thread.start()
+        threading.Thread(target=lambda: self._detect_thread(text), daemon=True).start()
     
     def _detect_thread(self, text):
         lang, conf, preds = self.predict(text)
-        self.root.after(0, self.display_results, text, lang, conf, preds)
+        self.log(f"Wynik: {lang} (pewnosc: {conf:.1%})" if lang else "Nie rozpoznano jezyka")
+        self.root.after(0, lambda: self.display_results(text, lang, conf, preds))
     
     def display_results(self, text, lang, conf, preds):
         self.result_text.delete("1.0", tk.END)
-        
-        self.result_text.insert(tk.END, "="*70 + "\n")
-        self.result_text.insert(tk.END, "WYNIK ANALIZY\n")
-        self.result_text.insert(tk.END, "="*70 + "\n\n")
+        self.result_text.insert(tk.END, "="*70 + "\nWYNIK ANALIZY\n" + "="*70 + "\n\n")
         
         if lang:
-            self.result_text.insert(tk.END, f"WYKRYTY JEZYK: {lang.upper()}\n")
-            self.result_text.insert(tk.END, f"PEWNOSC: {conf:.1%}\n\n")
-            
+            self.result_text.insert(tk.END, f"WYKRYTY JEZYK: {lang.upper()}\nPEWNOSC: {conf:.1%}\n\n")
             bar = "#" * int(conf * 30) + "-" * (30 - int(conf * 30))
             self.result_text.insert(tk.END, f"[{bar}] {conf:.1%}\n\n")
-            
-            self.result_text.insert(tk.END, "-"*70 + "\n")
-            self.result_text.insert(tk.END, "TOP 5 PRZEWIDYWAN\n")
-            self.result_text.insert(tk.END, "-"*70 + "\n")
+            self.result_text.insert(tk.END, "-"*70 + "\nTOP 5 PRZEWIDYWAN\n" + "-"*70 + "\n")
             
             for i, p in enumerate(preds[:5], 1):
-                info = f"{p['language'].upper()} - {p['confidence']:.1%}"
-                if 'name' in p:
-                    info = f"{p['language'].upper()} ({p['name']}) - {p['confidence']:.1%}"
                 bar2 = "#" * int(p['confidence'] * 20)
-                self.result_text.insert(tk.END, f"{i}. {info} [{bar2}]\n")
+                self.result_text.insert(tk.END, f"{i}. {p['language'].upper()} ({p['name']}) - {p['confidence']:.1%} [{bar2}]\n")
             
-            if preds and 'family' in preds[0]:
-                self.result_text.insert(tk.END, f"\nRodzina: {preds[0]['family']}")
-                self.result_text.insert(tk.END, f"\nAlfabet: {preds[0]['alphabet']}")
+            if preds:
+                self.result_text.insert(tk.END, f"\nRodzina: {preds[0]['family']}\nAlfabet: {preds[0]['alphabet']}")
         else:
             self.result_text.insert(tk.END, "NIE ROZPOZNANO JEZYKA\n")
-            self.result_text.insert(tk.END, "Tekst za krotki lub zawiera nieobslugiwane znaki\n")
         
         preview = text[:200] + "..." if len(text) > 200 else text
         self.result_text.insert(tk.END, f"\n\nTEKST:\n{preview}\n")
-        
         self.detect_btn.config(state=tk.NORMAL, text="ANALIZUJ")
     
-    def clear_text(self):
-        self.text_input.delete("1.0", tk.END)
-        self.text_input.insert(tk.END, "Wprowadz tekst do analizy (minimum 30 znakow)...")
-        self.result_text.delete("1.0", tk.END)
-    
     def show_test_texts(self):
+        if not self.test_texts:
+            messagebox.showwarning("Uwaga", "Brak tekstow testowych. Sprawdz plik test_languages.txt")
+            return
         win = tk.Toplevel(self.root)
         win.title("Teksty Testowe")
         win.geometry("550x450")
         win.configure(bg='#1a1a2e')
         
-        tk.Label(win, text="Wybierz testowy tekst:", font=('Arial', 12, 'bold'),
-                bg='#1a1a2e', fg='white').pack(pady=10)
+        tk.Label(win, text="Wybierz testowy tekst:", font=('Arial', 12, 'bold'), bg='#1a1a2e', fg='white').pack(pady=10)
         
-        listbox = tk.Listbox(win, font=('Arial', 10), bg='#0f3460', fg='white',
-                             selectbackground='#e94560', height=12)
+        listbox = tk.Listbox(win, font=('Arial', 10), bg='#0f3460', fg='white', selectbackground='#e94560', height=12)
         listbox.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 10))
-        
-        for name in self.test_texts.keys():
+        for name in sorted(self.test_texts.keys()):
             listbox.insert(tk.END, name)
         
         def on_select():
             sel = listbox.curselection()
             if sel:
-                name = listbox.get(sel[0])
                 self.text_input.delete("1.0", tk.END)
-                self.text_input.insert(tk.END, self.test_texts[name])
+                self.text_input.insert(tk.END, self.test_texts[listbox.get(sel[0])])
                 win.destroy()
         
-        btn_frame = tk.Frame(win, bg='#1a1a2e')
-        btn_frame.pack(fill=tk.X, padx=20, pady=(0, 20))
+        frame = tk.Frame(win, bg='#1a1a2e')
+        frame.pack(fill=tk.X, padx=20, pady=(0, 20))
+        tk.Button(frame, text="WYBIERZ", font=('Arial', 10), bg='#e94560', fg='white', cursor='hand2', width=12, command=on_select).pack(side=tk.LEFT, padx=(0, 10))
+        tk.Button(frame, text="ANULUJ", font=('Arial', 10), bg='#533483', fg='white', cursor='hand2', width=12, command=win.destroy).pack(side=tk.LEFT)
+    
+    def run_auto_test_gui(self):
+        if not self.models_loaded or not self.test_texts:
+            messagebox.showwarning("Uwaga", "Modele lub teksty testowe nie sa gotowe")
+            return
+        self.log(f"Uruchamianie auto-testu dla {len(self.test_texts)} jezykow...")
+        self.auto_btn.config(state=tk.DISABLED, text="TESTOWANIE...")
+        self.auto_result_text.delete("1.0", tk.END)
+        self.auto_result_text.insert(tk.END, "Uruchamianie auto-testu...\n\n")
+        threading.Thread(target=self._run_auto_test_thread, daemon=True).start()
+    
+    def _run_auto_test_thread(self):
+        results = []
+        correct = 0
+        for name, text in self.test_texts.items():
+            expected = name.split('(')[1].split(')')[0].lower()
+            detected, confidence, _ = self.predict(text)
+            is_correct = (detected == expected)
+            if is_correct:
+                correct += 1
+            results.append((name, expected, detected, confidence, is_correct))
         
-        tk.Button(btn_frame, text="WYBIERZ", font=('Arial', 10), bg='#e94560', fg='white',
-                 activebackground='#c62a48', cursor='hand2', width=12,
-                 command=on_select).pack(side=tk.LEFT, padx=(0, 10))
+        self.log(f"Auto-test zakonczony: {correct}/{len(results)} poprawnych ({correct/len(results)*100:.1f}%)")
+        self.root.after(0, lambda: self.display_auto_results(results, correct, len(results)))
+    
+    def display_auto_results(self, results, correct, total):
+        self.auto_result_text.delete("1.0", tk.END)
         
-        tk.Button(btn_frame, text="ANULUJ", font=('Arial', 10), bg='#533483', fg='white',
-                 activebackground='#3b1f6e', cursor='hand2', width=12,
-                 command=win.destroy).pack(side=tk.LEFT)
-
-def main():
-    root = tk.Tk()
-    app = LanguageDetectorGUI(root)
-    root.mainloop()
+        header = f"{'='*90}\n  AUTO-TEST: {correct}/{total} POPRAWNYCH ({correct/total*100:.1f}%)\n{'='*90}\n\n"
+        self.auto_result_text.insert(tk.END, header)
+        self.auto_result_text.insert(tk.END, f"  {'Jezyk':<30} {'Oczek':<6} {'Wykryty':<6} {'Pewnosc':<10} {'Status':<6}\n  {'-'*80}\n")
+        
+        for name, expected, detected, confidence, is_correct in results:
+            status = "OK" if is_correct else "FAIL"
+            self.auto_result_text.insert(tk.END, f"  {name:<30} {expected:<6} {detected:<6} {confidence:<9.1%} {status:<6}\n")
+        
+        summary = f"\n  {'='*90}\n  PODSUMOWANIE: {correct}/{total} ({correct/total*100:.1f}%)\n"
+        self.auto_result_text.insert(tk.END, summary)
+        
+        failed = [(n, e, d, c) for n, e, d, c, ok in results if not ok]
+        if failed:
+            self.auto_result_text.insert(tk.END, f"\n  Niepoprawne ({len(failed)}):\n")
+            for name, expected, detected, confidence in failed:
+                self.auto_result_text.insert(tk.END, f"    - {name}: wykryto '{detected}' ({confidence:.1%})\n")
+        
+        self.auto_btn.config(state=tk.NORMAL, text="URUCHOM AUTO-TEST")
+    
+    def generate_report_text(self):
+        report = []
+        report.append("="*70)
+        report.append("RAPORT - DETEKTOR JEZYKA I ALFABETU")
+        report.append("="*70)
+        report.append(f"Data wygenerowania: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        report.append(f"Liczba zaladowanych jezykow: {len(self.label_encoder.classes_) if self.label_encoder else 'N/A'}")
+        report.append(f"Liczba tekstow testowych: {len(self.test_texts)}")
+        report.append("="*70)
+        report.append("")
+        
+        if self.auto_result_text.get("1.0", tk.END).strip():
+            report.append("--- WYNIKI AUTO-TESTU ---")
+            report.append(self.auto_result_text.get("1.0", tk.END).strip())
+            report.append("")
+        
+        report.append("--- LOGI SYSTEMOWE ---")
+        for log_line in self.log_lines:
+            report.append(log_line)
+        
+        report.append("")
+        report.append("="*70)
+        report.append("KONIEC RAPORTU")
+        
+        return "\n".join(report)
+    
+    def save_report(self):
+        content = self.auto_result_text.get("1.0", tk.END).strip()
+        if not content or "AUTO-TEST" not in content:
+            messagebox.showwarning("Uwaga", "Najpierw uruchom auto-test")
+            return
+        
+        filename = f"raport_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            initialfile=filename,
+            filetypes=[("Pliki tekstowe", "*.txt"), ("Wszystkie pliki", "*.*")]
+        )
+        if filepath:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(self.generate_report_text())
+            self.log(f"Raport zapisany: {filepath}")
+            messagebox.showinfo("OK", f"Raport zapisany:\n{filepath}")
+    
+    def save_logs(self):
+        filename = f"logi_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            initialfile=filename,
+            filetypes=[("Pliki tekstowe", "*.txt"), ("Wszystkie pliki", "*.*")]
+        )
+        if filepath:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                for line in self.log_lines:
+                    f.write(line + "\n")
+            self.log(f"Logi zapisane: {filepath}")
+            messagebox.showinfo("OK", f"Logi zapisane:\n{filepath}")
 
 if __name__ == "__main__":
-    main()
+    root = tk.Tk()
+    LanguageDetectorGUI(root)
+    root.mainloop()

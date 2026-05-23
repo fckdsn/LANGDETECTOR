@@ -2,9 +2,15 @@ pandas
 numpy
 scikit-learn
 datasets
+huggingface_hub
+zstandard
 tqdm
 matplotlib
 seaborn
 joblib
 scipy
- 
+
+# dev (optional)
+pytest>=8.0
+ruff>=0.4
+mypy>=1.8
