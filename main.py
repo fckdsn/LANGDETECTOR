@@ -1,21 +1,43 @@
 import os
-from huggingface_hub import HfFileSystem
-from datasets import load_dataset
+import sys
+
 import joblib
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import LabelEncoder
-from sklearn.model_selection import train_test_split
-from scipy.sparse import hstack
-import numpy as np
+from datasets import load_dataset
+from huggingface_hub import HfFileSystem
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 import re
 import time
 
-HF_TOKEN = os.environ.get("HF_TOKEN", "")
+import numpy as np
+from scipy.sparse import hstack
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+
+DATASET_REPO = "oscar-corpus/community-oscar"
+_SNAPSHOT_CACHE = None
+_LANG_CACHE = None
+
+HF_TOKEN = "HF_TOKEN"
 os.environ["HF_TOKEN"] = HF_TOKEN
 
-LANGUAGE_INFO = {
+LANGUAGES = [
+    'en', 'de', 'nl', 'sv', 'da', 'no', 'af', 'is', 'fy',
+    'es', 'fr', 'it', 'pt', 'ca', 'ro', 'gl',
+    'pl', 'cs', 'sk', 'sl', 'hr',
+    'ru', 'uk', 'bg', 'sr', 'mk', 'be',
+    'cv', 'ba', 'os', 'tt', 'sah', 'av', 'ce',
+    'kbd', 'ady', 'mhr', 'mrj', 'udm', 'kv', 'xal', 'myv', 'mdf', 'koi',
+    'kk', 'ky', 'uz', 'tr', 'az', 'tk',
+    'fi', 'hu', 'et', 'lv', 'lt',
+    'sq', 'mt',
+    'id', 'ms', 'tl', 'vi', 'sw', 'sh'
+]
 
+LANGUAGE_INFO = {
     'en': {'family': 'Germanic', 'alphabet': 'latin', 'name': 'English'},
     'de': {'family': 'Germanic', 'alphabet': 'latin', 'name': 'German'},
     'nl': {'family': 'Germanic', 'alphabet': 'latin', 'name': 'Dutch'},
@@ -23,109 +45,166 @@ LANGUAGE_INFO = {
     'da': {'family': 'Germanic', 'alphabet': 'latin', 'name': 'Danish'},
     'no': {'family': 'Germanic', 'alphabet': 'latin', 'name': 'Norwegian'},
     'af': {'family': 'Germanic', 'alphabet': 'latin', 'name': 'Afrikaans'},
+    'is': {'family': 'Germanic', 'alphabet': 'latin', 'name': 'Icelandic'},
+    'fy': {'family': 'Germanic', 'alphabet': 'latin', 'name': 'Frisian'},
     'es': {'family': 'Romance', 'alphabet': 'latin', 'name': 'Spanish'},
     'fr': {'family': 'Romance', 'alphabet': 'latin', 'name': 'French'},
     'it': {'family': 'Romance', 'alphabet': 'latin', 'name': 'Italian'},
     'pt': {'family': 'Romance', 'alphabet': 'latin', 'name': 'Portuguese'},
     'ca': {'family': 'Romance', 'alphabet': 'latin', 'name': 'Catalan'},
+    'ro': {'family': 'Romance', 'alphabet': 'latin', 'name': 'Romanian'},
+    'gl': {'family': 'Romance', 'alphabet': 'latin', 'name': 'Galician'},
     'pl': {'family': 'Slavic', 'alphabet': 'latin', 'name': 'Polish'},
+    'cs': {'family': 'Slavic', 'alphabet': 'latin', 'name': 'Czech'},
     'sk': {'family': 'Slavic', 'alphabet': 'latin', 'name': 'Slovak'},
     'sl': {'family': 'Slavic', 'alphabet': 'latin', 'name': 'Slovenian'},
-
+    'hr': {'family': 'Slavic', 'alphabet': 'latin', 'name': 'Croatian'},
     'ru': {'family': 'Slavic', 'alphabet': 'cyrillic', 'name': 'Russian'},
     'uk': {'family': 'Slavic', 'alphabet': 'cyrillic', 'name': 'Ukrainian'},
     'bg': {'family': 'Slavic', 'alphabet': 'cyrillic', 'name': 'Bulgarian'},
     'sr': {'family': 'Slavic', 'alphabet': 'cyrillic', 'name': 'Serbian'},
     'mk': {'family': 'Slavic', 'alphabet': 'cyrillic', 'name': 'Macedonian'},
     'be': {'family': 'Slavic', 'alphabet': 'cyrillic', 'name': 'Belarusian'},
-
+    'cv': {'family': 'Turkic', 'alphabet': 'cyrillic', 'name': 'Chuvash'},
+    'ba': {'family': 'Turkic', 'alphabet': 'cyrillic', 'name': 'Bashkir'},
+    'os': {'family': 'Iranian', 'alphabet': 'cyrillic', 'name': 'Ossetian'},
+    'tt': {'family': 'Turkic', 'alphabet': 'cyrillic', 'name': 'Tatar'},
+    'sah': {'family': 'Turkic', 'alphabet': 'cyrillic', 'name': 'Yakut'},
+    'av': {'family': 'Caucasian', 'alphabet': 'cyrillic', 'name': 'Avar'},
+    'ce': {'family': 'Caucasian', 'alphabet': 'cyrillic', 'name': 'Chechen'},
+    'kbd': {'family': 'Caucasian', 'alphabet': 'cyrillic', 'name': 'Kabardian'},
+    'ady': {'family': 'Caucasian', 'alphabet': 'cyrillic', 'name': 'Adyghe'},
+    'mhr': {'family': 'Finno-Ugric', 'alphabet': 'cyrillic', 'name': 'Mari'},
+    'mrj': {'family': 'Finno-Ugric', 'alphabet': 'cyrillic', 'name': 'Hill Mari'},
+    'udm': {'family': 'Finno-Ugric', 'alphabet': 'cyrillic', 'name': 'Udmurt'},
+    'kv': {'family': 'Finno-Ugric', 'alphabet': 'cyrillic', 'name': 'Komi'},
+    'xal': {'family': 'Mongolic', 'alphabet': 'cyrillic', 'name': 'Kalmyk'},
+    'myv': {'family': 'Finno-Ugric', 'alphabet': 'cyrillic', 'name': 'Erzya'},
+    'mdf': {'family': 'Finno-Ugric', 'alphabet': 'cyrillic', 'name': 'Moksha'},
+    'koi': {'family': 'Finno-Ugric', 'alphabet': 'cyrillic', 'name': 'Komi-Permyak'},
+    'kk': {'family': 'Turkic', 'alphabet': 'cyrillic', 'name': 'Kazakh'},
+    'ky': {'family': 'Turkic', 'alphabet': 'cyrillic', 'name': 'Kyrgyz'},
+    'uz': {'family': 'Turkic', 'alphabet': 'latin', 'name': 'Uzbek'},
+    'tr': {'family': 'Turkic', 'alphabet': 'latin', 'name': 'Turkish'},
+    'az': {'family': 'Turkic', 'alphabet': 'latin', 'name': 'Azerbaijani'},
+    'tk': {'family': 'Turkic', 'alphabet': 'latin', 'name': 'Turkmen'},
     'fi': {'family': 'Finno-Ugric', 'alphabet': 'latin', 'name': 'Finnish'},
     'hu': {'family': 'Finno-Ugric', 'alphabet': 'latin', 'name': 'Hungarian'},
     'et': {'family': 'Finno-Ugric', 'alphabet': 'latin', 'name': 'Estonian'},
- 
     'lv': {'family': 'Baltic', 'alphabet': 'latin', 'name': 'Latvian'},
     'lt': {'family': 'Baltic', 'alphabet': 'latin', 'name': 'Lithuanian'},
-
-    'tr': {'family': 'Turkic', 'alphabet': 'latin', 'name': 'Turkish'},
-    'uz': {'family': 'Turkic', 'alphabet': 'latin', 'name': 'Uzbek'},
-    'ky': {'family': 'Turkic', 'alphabet': 'cyrillic', 'name': 'Kyrgyz'},
-
     'sq': {'family': 'Albanian', 'alphabet': 'latin', 'name': 'Albanian'},
     'mt': {'family': 'Semitic', 'alphabet': 'latin', 'name': 'Maltese'},
-    'ce': {'family': 'Caucasian', 'alphabet': 'cyrillic', 'name': 'Chechen'},
-
     'id': {'family': 'Austronesian', 'alphabet': 'latin', 'name': 'Indonesian'},
     'ms': {'family': 'Austronesian', 'alphabet': 'latin', 'name': 'Malay'},
     'tl': {'family': 'Austronesian', 'alphabet': 'latin', 'name': 'Tagalog'},
     'vi': {'family': 'Austroasiatic', 'alphabet': 'latin', 'name': 'Vietnamese'},
     'sw': {'family': 'Bantu', 'alphabet': 'latin', 'name': 'Swahili'},
-
     'sh': {'family': 'Slavic', 'alphabet': 'latin', 'name': 'Serbo-Croatian'},
 }
 
-def get_available_languages(snapshot="2024-22"):
-    print("Getting available languages...")
-    fs = HfFileSystem(token=HF_TOKEN)
-    snapshot_path = f"datasets/oscar-corpus/community-oscar/data/{snapshot}"
-    
+HIGH_PRIORITY = {
+    'pl': 2000, 'cs': 2000, 'sk': 2000, 'hr': 2000, 'sl': 2000,
+    'kk': 3000, 'ky': 3000, 'uz': 2000, 'tr': 2000, 'az': 2000, 'tk': 2000,
+    'cv': 2000, 'ba': 2000, 'os': 2000, 'tt': 2000, 'sah': 2000,
+    'av': 2000, 'ce': 2000,
+    'kbd': 2000, 'ady': 2000, 'mhr': 2000, 'mrj': 2000, 'udm': 2000,
+    'kv': 2000, 'xal': 2000, 'myv': 2000, 'mdf': 2000, 'koi': 2000,
+    'id': 2000, 'ms': 2000, 'tl': 2000, 'vi': 2000, 'sw': 2000,
+    'be': 2000, 'bg': 2000, 'sr': 2000, 'mk': 2000,
+    'ro': 2000, 'gl': 2000, 'is': 2000, 'fy': 2000,
+    'fi': 2000, 'hu': 2000, 'et': 2000, 'lv': 2000, 'lt': 2000,
+    'sq': 2000, 'mt': 2000, 'sh': 2000,
+}
+
+def get_snapshots():
+    global _SNAPSHOT_CACHE
+    if _SNAPSHOT_CACHE is not None:
+        return _SNAPSHOT_CACHE
     try:
-        items = fs.ls(snapshot_path, detail=False)
+        fs = HfFileSystem(token=HF_TOKEN)
+        items = fs.ls(f"datasets/{DATASET_REPO}/data", detail=False)
+        snaps = sorted({i.split('/')[-1] for i in items if '/' in i})
+        snaps = [s for s in snaps if s and not s.startswith('.')]
+        snaps.sort(reverse=True)
+        _SNAPSHOT_CACHE = snaps
+        return snaps
+    except Exception as e:
+        print(f"Error listing snapshots: {e}")
+        return []
+
+def get_available_languages():
+    global _LANG_CACHE
+    if _LANG_CACHE is not None:
+        return _LANG_CACHE
+    print("Getting available languages...")
+    snaps = get_snapshots()
+    if not snaps:
+        return []
+    snapshot = snaps[0]
+    print(f"Using snapshot: {snapshot}")
+    try:
+        fs = HfFileSystem(token=HF_TOKEN)
+        items = fs.ls(f"datasets/{DATASET_REPO}/data/{snapshot}", detail=False)
+        langs = sorted({i.split('/')[-1][:-len('_meta')] for i in items if i.split('/')[-1].endswith('_meta')})
+        print(f"Found {len(langs)} languages in OSCAR (snapshot {snapshot})")
+        _LANG_CACHE = langs
+        return langs
     except Exception as e:
         print(f"Error: {e}")
         return []
-    
-    languages = []
-    for item in items:
-        item_name = item.split('/')[-1]
-        if '_meta' in item_name:
-            lang_code = item_name.replace('_meta', '')
-            languages.append(lang_code)
-    
-    print(f"Found {len(languages)} languages in OSCAR")
-    return languages
 
-def load_data(language="pl", samples=800, snapshot="2024-22", timeout=30):
+def load_data(language="pl", samples=800, timeout=30):
     lang_name = LANGUAGE_INFO.get(language, {}).get('name', language)
     print(f"  Loading {language} ({lang_name})...", end=" ", flush=True)
     
-    try:
-        data_files = f"data/{snapshot}/{language}_meta/*.jsonl.zst"
-        
-        dataset = load_dataset(
-            "oscar-corpus/community-oscar",
-            data_files=data_files,
-            split="train",
-            token=HF_TOKEN,
-            streaming=True
-        )
-        
-        limited_dataset = []
-        start_time = time.time()
-        
-        for i, item in enumerate(dataset):
-            if i >= samples:
-                break
-            
-            if time.time() - start_time > timeout:
-                print("TIMEOUT")
-                return []
-            
-            if item.get('content') and len(item['content']) > 150:
-                content = item['content'][:4000]
-                limited_dataset.append({
-                    'text': content,
-                    'language': language,
-                    'lang_name': lang_name,
-                    'alphabet': LANGUAGE_INFO.get(language, {}).get('alphabet', 'unknown'),
-                    'family': LANGUAGE_INFO.get(language, {}).get('family', 'unknown')
-                })
-        
-        print(f"OK ({len(limited_dataset)} samples)")
-        return limited_dataset
-        
-    except Exception as e:
-        print(f"FAILED")
+    snapshots = get_snapshots()
+    if not snapshots:
+        print("FAILED: no snapshots available")
         return []
+    
+    last_err = None
+    for snapshot in snapshots:
+        pattern = f"data/{snapshot}/{language}_meta/*.jsonl.zst"
+        try:
+            dataset = load_dataset(
+                DATASET_REPO,
+                data_files=pattern,
+                split="train",
+                token=HF_TOKEN,
+                streaming=True
+            )
+            
+            limited_dataset = []
+            start_time = time.time()
+            
+            for i, item in enumerate(dataset):
+                if i >= samples:
+                    break
+                
+                if time.time() - start_time > timeout:
+                    break
+                
+                if item.get('content') and len(item['content']) > 150:
+                    content = item['content'][:4000]
+                    limited_dataset.append({
+                        'text': content,
+                        'language': language,
+                        'lang_name': lang_name,
+                        'alphabet': LANGUAGE_INFO.get(language, {}).get('alphabet', 'unknown'),
+                        'family': LANGUAGE_INFO.get(language, {}).get('family', 'unknown')
+                    })
+            
+            if limited_dataset:
+                print(f"OK ({len(limited_dataset)} samples) [{snapshot}]")
+                return limited_dataset
+        except Exception as e:
+            last_err = e
+            continue
+    
+    msg = str(last_err)[:60] if last_err else "no data"
+    print(f"FAILED: {msg}")
+    return []
 
 def extract_features(texts, max_char_features=20000, max_word_features=6000):
     print("  Extracting char features (2-6 n-grams)...")
@@ -158,18 +237,17 @@ def extract_features(texts, max_char_features=20000, max_word_features=6000):
 
 def train_model():
     print("="*70)
-    print(" TRAINING LANGUAGE DETECTION MODEL - 50 LANGUAGES")
+    print(" TRAINING LANGUAGE DETECTION MODEL")
     print("="*70)
     
     print("\n[1] Getting available languages...")
-    available_langs = get_available_languages("2024-22")
+    available_langs = get_available_languages()
     
     if not available_langs:
         print("Cannot get language list")
         return False
     
-    languages_to_load = [l for l in LANGUAGE_INFO.keys() if l in available_langs]
-    languages_to_load = languages_to_load[:50]
+    languages_to_load = [lang for lang in LANGUAGES if lang in available_langs]
     
     print(f"\n[2] Will load {len(languages_to_load)} languages...")
     print("-"*70)
@@ -179,8 +257,7 @@ def train_model():
     
     for i, lang in enumerate(languages_to_load, 1):
         print(f"  {i:3d}/{len(languages_to_load)} ", end="")
-        samples = 800
-        data = load_data(lang, samples=samples)
+        data = load_data(lang, HIGH_PRIORITY.get(lang, 800))
         
         if data:
             all_data.extend(data)
@@ -212,14 +289,14 @@ def train_model():
         X, y, test_size=0.2, random_state=42, stratify=y
     )
     
-    print(f"\n[6] Training Random Forest...")
+    print("\n[6] Training Random Forest...")
     print(f"    Training samples: {X_train.shape[0]}")
     print(f"    Test samples: {X_test.shape[0]}")
     print(f"    Features: {X_train.shape[1]}")
     
     model = RandomForestClassifier(
-        n_estimators=300,
-        max_depth=35,
+        n_estimators=500,
+        max_depth=50,
         min_samples_split=2,
         min_samples_leaf=1,
         random_state=42,
@@ -233,21 +310,19 @@ def train_model():
     accuracy = model.score(X_test, y_test)
     print(f"    Overall Accuracy: {accuracy:.4f} ({accuracy*100:.2f}%)")
     
-    from sklearn.metrics import classification_report
-    y_pred = model.predict(X_test)
     y_proba = model.predict_proba(X_test)
     avg_conf = np.mean(np.max(y_proba, axis=1))
     print(f"    Average confidence: {avg_conf:.1%}")
     
     print("\n[8] Saving models...")
-    os.makedirs('models', exist_ok=True)
+    os.makedirs('pliki/models', exist_ok=True)
     
-    joblib.dump(model, 'models/language_model.pkl')
-    joblib.dump(label_encoder, 'models/language_encoder.pkl')
-    joblib.dump(vectorizers, 'models/vectorizers.pkl')
-    joblib.dump(LANGUAGE_INFO, 'models/language_info.pkl')
+    joblib.dump(model, 'pliki/models/language_model.pkl')
+    joblib.dump(label_encoder, 'pliki/models/language_encoder.pkl')
+    joblib.dump(vectorizers, 'pliki/models/vectorizers.pkl')
+    joblib.dump(LANGUAGE_INFO, 'pliki/models/language_info.pkl')
     
-    print("    Models saved in models/ folder")
+    print("    Models saved in pliki/models/ folder")
     
     return True
 
@@ -289,7 +364,6 @@ def predict_language(text, model, label_encoder, vectorizers, language_info=None
     return results[0]['language'], results[0]['confidence'], results
 
 def run_auto_test(test_file='test_languages.txt'):
-    """Automatyczny test z pliku"""
     print("\n" + "="*70)
     print(" AUTO TEST - LOADING TESTS FROM FILE")
     print("="*70)
@@ -319,10 +393,16 @@ def run_auto_test(test_file='test_languages.txt'):
     print(f"\n Found {len(tests)} test cases")
     print("-"*70)
     
-    model = joblib.load('models/language_model.pkl')
-    label_encoder = joblib.load('models/language_encoder.pkl')
-    vectorizers = joblib.load('models/vectorizers.pkl')
-    language_info = joblib.load('models/language_info.pkl')
+    models_path = 'pliki/models'
+    
+    if not os.path.exists(f'{models_path}/language_model.pkl'):
+        print(" Models not found. Please train model first.")
+        return
+    
+    model = joblib.load(f'{models_path}/language_model.pkl')
+    label_encoder = joblib.load(f'{models_path}/language_encoder.pkl')
+    vectorizers = joblib.load(f'{models_path}/vectorizers.pkl')
+    language_info = joblib.load(f'{models_path}/language_info.pkl')
     
     results = []
     correct = 0
@@ -339,7 +419,6 @@ def run_auto_test(test_file='test_languages.txt'):
     
     for expected, detected, confidence, is_correct, preview in results:
         status = "OK" if is_correct else "FAIL"
-        bar = "#" * int(confidence * 20)
         print(f" {expected:<10} {detected:<10} {confidence:<11.1%} {status:<8} {preview}...")
     
     print("\n" + "="*70)
@@ -349,10 +428,12 @@ def run_auto_test(test_file='test_languages.txt'):
 
 def interactive_mode():
     print("="*70)
-    print(" INTERACTIVE LANGUAGE DETECTION - 50 LANGUAGES")
+    print(" INTERACTIVE LANGUAGE DETECTION")
     print("="*70)
     
-    if not os.path.exists('models/language_model.pkl'):
+    models_path = 'pliki/models'
+    
+    if not os.path.exists(f'{models_path}/language_model.pkl'):
         print("\n No trained model found.")
         print(" Starting training (this may take 10-15 minutes)...")
         if not train_model():
@@ -360,22 +441,22 @@ def interactive_mode():
             return
     
     print("\n Loading models...")
-    model = joblib.load('models/language_model.pkl')
-    label_encoder = joblib.load('models/language_encoder.pkl')
-    vectorizers = joblib.load('models/vectorizers.pkl')
+    model = joblib.load(f'{models_path}/language_model.pkl')
+    label_encoder = joblib.load(f'{models_path}/language_encoder.pkl')
+    vectorizers = joblib.load(f'{models_path}/vectorizers.pkl')
     
     language_info = {}
-    if os.path.exists('models/language_info.pkl'):
-        language_info = joblib.load('models/language_info.pkl')
+    if os.path.exists(f'{models_path}/language_info.pkl'):
+        language_info = joblib.load(f'{models_path}/language_info.pkl')
     
     print(f" Model loaded: {len(label_encoder.classes_)} languages")
-    print(f" Languages: {', '.join(label_encoder.classes_[:20])}...")
+    print(f" Languages: {', '.join(list(label_encoder.classes_)[:20])}...")
     
     print("\n" + "="*70)
     print(" INSTRUCTIONS:")
     print("   - Enter text in any language (MANUAL MODE)")
     print("   - Type 'auto' to run automatic test from test_languages.txt")
-    print("   - Type 'languages' to see all 50 languages")
+    print("   - Type 'languages' to see all languages")
     print("   - Type 'exit' to quit")
     print("   - Minimum 30 characters for manual mode")
     print("-"*70)

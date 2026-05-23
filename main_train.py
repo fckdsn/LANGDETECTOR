@@ -1,7 +1,8 @@
-from config import LANGUAGES, OUTPUT_DIR
-from preprocess import clean_text, detect_alphabet
+﻿from config import LANGUAGES, OUTPUT_DIR
 from data_loader import load_multiple_languages
+from preprocess import clean_text, detect_alphabet
 from train import train_complete_model
+
 
 def load_and_prepare_data():
     print("Loading data...")

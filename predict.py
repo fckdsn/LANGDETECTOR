@@ -1,9 +1,10 @@
 import joblib
 import numpy as np
-import re
 from scipy.sparse import hstack
-from config import MODELS_DIR, LANGUAGE_INFO
+
+from config import LANGUAGE_INFO, MODELS_DIR
 from preprocess import clean_text
+
 
 class LanguageDetector:
     def __init__(self):
