@@ -1,7 +1,7 @@
 [project]
 name = "langdetector"
-version = "1.0.0"
-description = "Multilingual language detector (60+ languages)"
+version = "2.0.0"
+description = "Language and script classifier for 120+ languages with ML algorithm comparison"
 readme = "README.md"
 requires-python = ">=3.10"
 
