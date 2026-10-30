@@ -1,5 +1,3 @@
-"""Put project root on sys.path (pytest, IDE, or `python tests/test_*.py`)."""
-
 import sys
 from pathlib import Path
 

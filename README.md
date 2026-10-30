@@ -1,38 +1,53 @@
 # LANGDETECTOR
 
-Многоязычный детектор языка на основе TF-IDF (символьные и словные n-граммы) и Random Forest. Поддерживается **60+ языков** (латиница и кириллица): европейские, тюркские, славянские, финно-угорские и др.
+Система классификации естественных языков и систем письма с использованием алгоритмов машинного обучения.
 
-Данные для обучения загружаются из корпуса [OSCAR](https://huggingface.co/datasets/oscar-corpus/community-oscar) через Hugging Face.
+**Тема работы:** реализация базовых классификационных моделей и механизмов обработки текстовых данных для детекции языка и алфавита. Сравнивается эффективность разных алгоритмов машинного обучения (Random Forest, SVM, Naive Bayes, нейронные сети) с анализом качества по метрикам accuracy, precision, recall и F1-score.
+
+## Что умеет система
+
+| Возможность | Детали |
+|-------------|--------|
+| **122 языка** | 14 языковых семей, настраивается в `config.py` |
+| **27 систем письма** | латиница, кириллица, иероглифы (китайский, японский), хангыль, деванагари, арабица, тайское, тамильское, грузинское, эфиопское и др. |
+| **6 алгоритмов ML** | Naive Bayes (Multinomial + Complement), логистическая регрессия, линейный SVM, Random Forest, нейросеть MLP |
+| **Две задачи** | отдельные модели для определения языка и для определения системы письма |
+| **Полная оценка качества** | accuracy, balanced accuracy, precision, recall, F1 (weighted + macro), top-3 accuracy, ROC/AUC, матрицы ошибок |
+
+### Поддерживаемые системы письма
+
+Логографические и слоговые: `han` (китайский, кантонский), `japanese` (кандзи + кана), `hangul` (корейский).
+
+Абугиды: `devanagari` (хинди, маратхи, непальский, санскрит, майтхили), `bengali`, `gurmukhi`, `gujarati`, `oriya`, `tamil`, `telugu`, `kannada`, `malayalam`, `sinhala`, `thai`, `lao`, `khmer`, `myanmar`, `tibetan`, `ethiopic`, `thaana`.
+
+Алфавиты и абджады: `latin`, `cyrillic`, `greek`, `armenian`, `georgian`, `arabic` (арабский, персидский, урду, пушту, курдский, уйгурский, синдхи), `hebrew` (иврит, идиш).
 
 ## Требования
 
 - Python 3.10+
-- Токен Hugging Face (для загрузки OSCAR при обучении)
+- Токен Hugging Face (нужен только для загрузки OSCAR при обучении)
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Опционально для разработки:
-
-```bash
-pip install pytest ruff mypy
-```
+Дополнительных зависимостей для нейросети не требуется — используется `MLPClassifier` из scikit-learn.
 
 ## Структура проекта
 
 | Файл | Назначение |
 |------|------------|
-| `main_train.py` | Обучение модели (загрузка данных → EDA → train) |
-| `train.py` | Логика обучения, метрики, сохранение артефактов |
-| `data_loader.py` | Загрузка текстов из OSCAR |
-| `preprocess.py` | Очистка текста, определение алфавита |
-| `predict.py` | CLI-детектор (`LanguageDetector`) |
-| `main.py` | Альтернативный CLI с обучением и auto-test |
+| `config.py` | Языки, системы письма, пути, параметры обучения |
+| `preprocess.py` | Unicode-очистка текста, определение системы письма, токенизация |
+| `data_loader.py` | Загрузка корпуса OSCAR с Hugging Face |
+| `models.py` | Реестр сравниваемых алгоритмов + `SoftmaxSVC` |
+| `train.py` | Извлечение признаков, сравнение моделей, метрики, графики |
+| `main_train.py` | Оркестрация обучения (загрузка → фильтрация → обучение) |
+| `predict.py` | `LanguageDetector` — API вывода и интерактивный режим |
+| `main.py` | CLI со всеми подкомандами |
 | `gui.py` | Графический интерфейс (Tkinter) |
-| `config.py` | Языки, пути, метаданные |
-| `test_languages.txt` | Примеры для auto-test (`код\|текст`) |
-| `pliki/models/` | Сохранённые модели (после обучения) |
+| `test_languages.txt` | Оценочный набор, 122 строки формата `код\|текст` |
+| `pliki/` | Результаты обучения: модели, графики, отчёты |
 
 ## Быстрый старт
 
@@ -42,60 +57,79 @@ pip install pytest ruff mypy
 $env:HF_TOKEN = "hf_xxxxxxxx"
 ```
 
-Или задайте переменную в системе. Без токена загрузка OSCAR при обучении не сработает.
-
-### 2. Обучение модели
-
-Полный пайплайн: загрузка ~60 языков, EDA, обучение языковой и алфавитной моделей, графики в `pliki/`.
+### 2. Обучение со сравнением алгоритмов
 
 ```bash
-python main_train.py
+python main.py train
 ```
 
-Занимает **десятки минут** (зависит от сети и числа языков). Результат:
+Полный проход: загрузка ~122 языков из OSCAR, EDA, извлечение признаков, обучение и сравнение 6 алгоритмов, обучение модели письма. Занимает **несколько часов** (в основном загрузка данных и обучение MLP/Random Forest).
 
-- `pliki/models/language_model.pkl`
-- `pliki/models/language_encoder.pkl`
-- `pliki/models/vectorizers.pkl`
-- `pliki/models/alphabet_model.pkl`
-- `pliki/eda_analysis.png`, confusion matrix, отчёт классификации
-
-### 3. Интерактивное определение языка
-
-**Консоль (модуль `predict.py`):**
+Быстрый проход для проверки пайплайна:
 
 ```bash
-python predict.py
+python main.py train --samples 200 --models fast
 ```
 
-Введите текст (минимум **30 символов** после очистки), для выхода — `exit`.
+Полезные флаги:
 
-**Консоль (расширенный `main.py`):**
+| Флаг | Описание |
+|------|----------|
+| `--samples N` | образцов на язык (по умолчанию — из `config.SAMPLE_OVERRIDES`) |
+| `--languages en,de,zh,ja` | обучать только на указанных языках |
+| `--models` | список алгоритмов или набор: `default`, `fast`, `all` |
+| `--keep-candidates` | сохранить на диске все сравниваемые модели, не только лучшую |
+| `--no-eda` | пропустить исследовательский анализ |
+
+Список доступных алгоритмов:
 
 ```bash
-python main.py
+python main.py models
 ```
 
-Команды: `auto` — тест из `test_languages.txt`, `languages` — список классов, `exit`.
-
-**GUI:**
+### 3. Определение языка
 
 ```bash
-python gui.py
+python main.py predict "人工智能的快速发展改变了许多行业"
+python main.py predict --file article.txt
+python main.py predict            # интерактивный режим
 ```
 
-Вкладки: детекция, auto-test, логи.
-
-### 4. Auto-test по файлу
-
-Формат `test_languages.txt` — одна строка на язык:
+Пример вывода:
 
 ```
-en|The quick brown fox jumps over the lazy dog...
-de|Die schnelle Entwicklung der künstlichen Intelligenz...
+  JEZYK:    ZH (Chinese (Mandarin))
+  PEWNOSC:  99.4%
+  RODZINA:  Sino-Tibetan
+  PISMO:    Han (hanzi) (han) - 99.9%, zrodlo: model ML
 ```
 
-Запуск из `main.py` (после обучения): введите `auto`.
+### 4. Остальные подкоманды
+
+```bash
+python main.py autotest    # оценка на test_languages.txt, с разбивкой по системам письма
+python main.py report      # таблица сравнения алгоритмов из последнего обучения
+python main.py languages   # все языки, сгруппированные по системе письма
+python main.py gui         # графический интерфейс
+```
+
+## Результаты обучения
+
+После `python main.py train` в `pliki/` появляются:
+
+| Файл | Содержание |
+|------|------------|
+| `model_comparison.png` | сравнение алгоритмов: метрики, F1 weighted vs macro, время, accuracy |
+| `classification_report.txt` | метрики лучшей модели + отчёт по каждому языку |
+| `confusion_matrix_language.png` | матрица ошибок 122×122 |
+| `confusion_matrix_script.png` | матрица ошибок по системам письма |
+| `f1_per_language.png` | F1 по каждому языку, отсортировано, цвет = система письма |
+| `roc_curves.png`, `roc_curves_combined.png` | ROC/AUC для представителей разных систем письма |
+| `eda_analysis.png` | длины текстов, топ языков, семьи, распределение письма |
+| `reports/model_comparison.csv` | те же данные в машинночитаемом виде |
+| `reports/classification_report_<алгоритм>.txt` | отчёт по каждому сравниваемому алгоритму |
+| `reports/dataset_composition.json` | состав загруженного корпуса |
+| `models/*.pkl` | модель языка, модель письма, векторизаторы, метаданные |
 
 ## Использование в коде
 
@@ -103,41 +137,57 @@ de|Die schnelle Entwicklung der künstlichen Intelligenz...
 from predict import LanguageDetector
 
 detector = LanguageDetector()
-lang, confidence, top5 = detector.predict(
-    "The rapid advancement of artificial intelligence has transformed many industries."
-)
-print(lang, confidence)  # en, ~0.95
-for p in top5:
-    print(p["language"], p["name"], p["confidence"])
+print(detector.algorithm)        # какой алгоритм выиграл сравнение
+print(len(detector.languages))   # число классов
+
+analysis = detector.analyze("機械学習アルゴリズムは膨大なデータを分析します")
+print(analysis["language"])                 # ja
+print(analysis["script"]["script"])         # japanese
+for item in analysis["predictions"]:
+    print(item["language"], item["name"], item["confidence"])
 ```
 
-Очистка текста отдельно:
+Обработка текста и определение письма отдельно:
 
 ```python
-from preprocess import clean_text, detect_alphabet
+from preprocess import clean_text, detect_script, script_profile
 
-text = clean_text("Hello! Visit https://example.com  ")
-alphabet = detect_alphabet(text)  # latin | cyrillic | mixed
+clean_text("Hello! Visit https://example.com")   # 'hello visit'
+detect_script("人工智能的快速发展")                  # 'han'
+detect_script("機械学習アルゴリズム")                # 'japanese'
+detect_script("मशीन लर्निंग")                      # 'devanagari'
+script_profile("hello мир 中文")                   # {'latin': .., 'cyrillic': .., 'han': ..}
 ```
 
-## Тесты
+## Как это работает
 
-Запускайте из корня проекта (`LANGDETECTOR`):
+**Обработка текста.** `clean_text` работает по таблице диапазонов Unicode (`preprocess.SCRIPT_RANGES`), а не по списку латинских и кириллических букв. Сохраняются в том числе комбинирующие знаки: матры деванагари, тайские знаки тона, арабская огласовка — это отдельные кодовые точки категорий Mn/Mc, и их удаление разрушило бы текст.
+
+**Признаки.** TF-IDF на символьных n-граммах (1–4) и словесных n-граммах (1–2). Символьные униграммы включены намеренно: один знак сразу идентифицирует систему письма. Токенизатор словесных признаков разбивает письмо без пробелов (китайский, японский, тайский, лаосский, кхмерский, бирманский, тибетский) на отдельные знаки — иначе целое предложение стало бы одним токеном.
+
+**Память.** Словарь n-грамм строится на стратифицированной подвыборке корпуса (`config.VECTORIZER_FIT_SAMPLES`), после чего преобразуется весь набор. На 122 языках это снижает пик потребления памяти в несколько раз без потери репрезентативности.
+
+**Фильтрация корпуса.** Документ отбрасывается, если доля объявленной для языка системы письма ниже 30% (`main_train.MIN_SCRIPT_SHARE`). Так из корпуса уходят страницы, которые фактически написаны на другом языке.
+
+**Порог длины.** Для письма без пробелов минимальная длина входа ниже (`MIN_TEXT_LENGTH_DENSE = 8` против `MIN_TEXT_LENGTH = 30`): десяток иероглифов несёт столько же информации, сколько существенно более длинная латинская фраза.
+
+**Вероятности для SVM.** `LinearSVC` масштабируется на разреженных матрицах с десятками тысяч признаков, но не даёт `predict_proba`. Калибровка Платта потребовала бы кросс-валидации для каждого из ~122 классов, поэтому `models.SoftmaxSVC` переводит отступы в вероятности через softmax. Преобразование монотонно, поэтому ранжирование классов и кривые ROC совпадают с исходным SVM.
+
+## Тесты
 
 ```bash
 python -m pytest tests/ -v
 ```
 
-Также работает прямой запуск файла (путь к корню подставляется автоматически):
+93 теста, обученные модели не требуются:
 
-```bash
-python tests/test_preprocess.py
-python tests/test_predict.py
-```
-
-Не запускайте `conftest.py` напрямую — это служебный файл pytest.
-
-Тесты `preprocess` не требуют обученных моделей. Тесты `predict` используют минимальную модель во временной директории.
+| Файл | Что проверяет |
+|------|---------------|
+| `test_config.py` | размер пула языков, полнота метаданных, покрытие сложных систем письма |
+| `test_preprocess.py` | сохранение букв всех 18 письменностей, комбинирующие знаки, определение письма, японский vs китайский, токенизация |
+| `test_models.py` | единый интерфейс всех алгоритмов, корректность `predict_proba`, `SoftmaxSVC` |
+| `test_train.py` | извлечение признаков на многоязычных данных, все метрики, фильтрация редких классов |
+| `test_predict.py` | контракт `predict`, сложные письменности, определение письма, `analyze` |
 
 ## Линтеры
 
@@ -152,17 +202,14 @@ python -m mypy .
 python data_loader.py
 ```
 
-## Дополнительные скрипты
-
-```bash
-python add_polish_data.py   # подготовка доп. польских текстов (нужны уже обученные vectorizers)
-```
+Показывает доступные снапшоты OSCAR, какие из настроенных языков отсутствуют в корпусе, и пробную загрузку для `en`, `zh`, `ja`, `hi`, `ar`, `th`.
 
 ## Примечания
 
-- Минимальная длина входа для `LanguageDetector.predict`: **30 символов** после `clean_text`.
-- Модели в репозиторий обычно не коммитятся — обучите локально или положите `.pkl` в `pliki/models/`.
-- Не храните `HF_TOKEN` в коде: используйте переменную окружения `HF_TOKEN` (см. `config.py`).
+- Языки, отсутствующие в текущем снапшоте OSCAR, пропускаются при загрузке без ошибки, поэтому фактическое число классов может быть меньше 122.
+- Тексты в `test_languages.txt` для языков с малым числом носителей (`dv`, `bo`, `ckb`, `as`, `or`, `sd`, `mai`, `lez`, `tyv`, `krc`, `bxr`) стоит проверить у носителя языка перед использованием результатов auto-test в работе. Система письма в них заведомо верная, формулировки — нет.
+- Модели в репозиторий не коммитятся: обучите локально или положите `.pkl` в `pliki/models/`.
+- Не храните `HF_TOKEN` в коде — используйте переменную окружения.
 
 ## Лицензия
 
