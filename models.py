@@ -43,7 +43,8 @@ class SoftmaxSVC(BaseEstimator, ClassifierMixin):
             C=self.C,
             class_weight=self.class_weight,
             max_iter=self.max_iter,
-            dual=True,
+            # 'auto' dobiera formulacje do kształtu macierzy (sklearn >= 1.5).
+            dual='auto',
             random_state=self.random_state,
         )
         self.estimator_.fit(X, y)
@@ -109,7 +110,7 @@ MODEL_REGISTRY = {
             'C': 10.0,
             'max_iter': 300,
             'solver': 'lbfgs',
-            'n_jobs': -1,
+            # n_jobs nie ma efektu od scikit-learn 1.8 i zniknie w 1.10.
             'random_state': RANDOM_STATE,
         },
         notes='Liniowa granica decyzyjna, softmax na wyjsciu; punkt odniesienia.',

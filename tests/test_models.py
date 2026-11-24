@@ -51,6 +51,25 @@ def test_default_models_are_registered():
         assert name in MODEL_REGISTRY
 
 
+def test_default_comparison_uses_six_algorithms():
+    """Porownanie opisane w pracy obejmuje dokladnie szesc algorytmow."""
+    assert len(DEFAULT_MODELS) == 6
+    assert DEFAULT_MODELS == (
+        'naive_bayes',
+        'complement_nb',
+        'logistic_regression',
+        'linear_svm',
+        'random_forest',
+        'mlp',
+    )
+
+
+def test_logistic_regression_leaves_n_jobs_unset():
+    """Od scikit-learn 1.8 ``n_jobs`` nic nie robi i zniknie w 1.10."""
+    model = build_model('logistic_regression')
+    assert model.n_jobs is None
+
+
 def test_get_spec_rejects_unknown_model():
     with pytest.raises(KeyError):
         get_spec('nie_ma_takiego_modelu')

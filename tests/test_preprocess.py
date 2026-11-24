@@ -1,14 +1,18 @@
 import re
+import unicodedata
 
 import path_setup  # noqa: F401
+import pytest
 
 from preprocess import (
+    SCRIPT_RANGES,
     WORD_TOKEN_PATTERN,
     clean_text,
     detect_alphabet,
     detect_script,
     script_profile,
     script_share,
+    tokenize_words,
 )
 
 SAMPLES = {
@@ -177,3 +181,93 @@ def test_word_token_pattern_handles_mixed_text():
     assert "data" in tokens
     assert "数" in tokens
     assert "analysis" in tokens
+
+
+# --- pisma inne niz lacinka i cyrylica ---------------------------------------
+
+@pytest.mark.parametrize('text', [
+    "मशीन लर्निंग एल्गोरिदम बड़ी मात्रा में डेटा का विश्लेषण करते हैं",
+    "कृत्रिम बुद्धिमत्ता",
+    "মেশিন লার্নিং অ্যালগরিদম",
+    "இயந்திர கற்றல் வழிமுறைகள்",
+    "ਮਸ਼ੀਨ ਲਰਨਿੰਗ ਐਲਗੋਰਿਦਮ",
+    "મશીન લર્નિંગ અલ્ગોરિધમ",
+    "ମେସିନ୍ ଲର୍ନିଙ୍ଗ୍ ଆଲଗୋରିଦମ୍",
+    "యంత్ర అభ్యాసం అల్గారిథమ్",
+    "ಯಂತ್ರ ಕಲಿಕೆ ಅಲ್ಗಾರಿದಮ್",
+    "യന്ത്ര പഠന അൽഗോരിതം",
+    "යන්ත්‍ර ඉගෙනුම් ඇල්ගොරිතම",
+    "މިޝިން ލަރނިންގް",
+    "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ",
+    "אלגוריתמים של למידת מכונה",
+])
+def test_spaced_scripts_keep_matras_inside_words(text):
+    """Matry i ogloski nie moga rozcinac slowa. ``\\w`` tak wlasnie robil."""
+    cleaned = clean_text(text)
+    assert cleaned
+    assert tokenize_words(cleaned) == cleaned.split()
+
+
+def test_devanagari_danda_is_not_part_of_the_word():
+    cleaned = clean_text("नमस्ते। दुनिया")
+    assert "।" not in cleaned
+    assert tokenize_words(cleaned) == ["नमस्ते", "दुनिया"]
+
+
+def test_clean_text_joins_spaced_ideographs():
+    assert clean_text("人 工 智 能 的 快 速 发 展") == "人工智能的快速发展"
+    assert clean_text("人, 工智能。快速发展") == "人工智能快速发展"
+    assert clean_text("機械 学習 アルゴリズム") == "機械学習アルゴリズム"
+
+
+def test_clean_text_keeps_spaces_between_latin_and_han():
+    assert clean_text("hello 世界 today") == "hello 世界 today"
+
+
+def test_single_non_latin_letters_are_kept():
+    assert clean_text("я в доме у окна сегодня") == "я в доме у окна сегодня"
+
+
+def test_fullwidth_and_ligatures_are_normalized():
+    cleaned = clean_text("ＡＩは東京で発展している")
+    assert cleaned.startswith("ai")
+    assert "東京" in cleaned
+    assert detect_script("ＡＩ") == "latin"
+    assert clean_text("ﬁle ofﬁce today") == "file office today"
+
+
+def test_nfd_latin_accents_are_composed():
+    raw = unicodedata.normalize("NFD", "Café résumé")
+    assert clean_text(raw) == "café résumé"
+
+
+def test_cjk_extensions_count_as_han():
+    extension_b = "𠀀𠀁𠀂𠀃𠀄𠀅𠀆𠀇"
+    extension_j = "".join(chr(0x323B0 + i) for i in range(8))
+    for text in (extension_b, extension_j):
+        assert clean_text(text) == text
+        assert detect_script(text) == "han"
+        assert tokenize_words(text) == list(text)
+
+
+def test_thai_marks_attach_to_the_base_character():
+    text = clean_text("อัลกอริทึมการเรียนรู้ของเครื่อง")
+    tokens = tokenize_words(text)
+    assert len(tokens) > 1
+    assert len(tokens) < len(text)
+    assert "".join(tokens) == text
+
+
+def test_script_ranges_do_not_overlap():
+    intervals = [
+        (low, high, name)
+        for name, ranges in SCRIPT_RANGES.items()
+        for low, high in ranges
+    ]
+    intervals.sort()
+    open_ranges = []
+    for low, high, name in intervals:
+        open_ranges = [(end, other) for end, other in open_ranges if end >= low]
+        for _, other in open_ranges:
+            assert other == name, f"{name} nachodzi na {other} przy U+{low:04X}"
+        open_ranges.append((high, name))
