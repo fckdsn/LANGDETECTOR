@@ -123,8 +123,9 @@ def extract_features(texts, labels=None):
 
     N-gramy znakowe zaczynaja sie od unigramow - pojedynczy znak niesie w tym
     zadaniu duzo informacji, bo od razu identyfikuje pismo (np. hiragana, kana,
-    dewanagari). Tokenizacja slowna uzywa wzorca rozbijajacego pisma bez spacji
-    (chinski, japonski, tajski) na osobne znaki.
+    dewanagari). Tokenizacja slowna rozbija pisma bez spacji (chinski, japonski,
+    tajski) na znak bazowy z jego znakami kombinujacymi, a abugidy ze spacjami
+    (dewanagari, bengalski, tamilski) zostawia jako cale slowa wraz z matrami.
     """
     _header("EKSTRAKCJA CECH")
     print(f"  Liczba tekstow: {len(texts)}")

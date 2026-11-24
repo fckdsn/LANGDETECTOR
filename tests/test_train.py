@@ -48,6 +48,16 @@ def test_extract_features_word_vectorizer_tokenizes_cjk():
     assert any(len(token) == 1 and '\u4e00' <= token <= '\u9fff' for token in vocabulary)
 
 
+def test_extract_features_keeps_devanagari_words_whole():
+    """Matry nie moga pociac slowa hinduskiego na fragmenty n-gramow."""
+    text = "मशीन लर्निंग एल्गोरिदम बड़ी मात्रा में डेटा का विश्लेषण करते हैं"
+    _, (_, word_vectorizer) = extract_features([text], ['hi'])
+    vocabulary = word_vectorizer.vocabulary_
+    assert 'मशीन' in vocabulary
+    assert 'विश्लेषण' in vocabulary
+    assert 'डेटा' in vocabulary
+
+
 def test_extract_features_separates_scripts():
     """Teksty w roznych pismach nie moga dzielic cech znakowych."""
     X, _ = extract_features(MULTISCRIPT_TEXTS, MULTISCRIPT_LABELS)
